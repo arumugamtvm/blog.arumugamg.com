@@ -245,8 +245,12 @@ export default function App() {
         </div>
 
         <div className="header-actions">
-          <a href="https://app.arumugamg.com" className="btn btn-ghost btn-sm btn-nav">
-            <span>Dashboard</span>
+          <a
+            href="https://app.arumugamg.com"
+            className="btn btn-ghost btn-sm btn-nav"
+            aria-label="Sign in to manage blog posts"
+          >
+            <span>Admin sign in</span>
             <ArrowRight size={14} />
           </a>
         </div>
