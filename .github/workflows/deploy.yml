@@ -40,7 +40,7 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: ${{ steps.deployment.outputs.page_url || steps.deployment-retry.outputs.page_url }}
 
     steps:
       - uses: actions/checkout@v4
@@ -67,4 +67,14 @@ jobs:
 
       - name: Deploy to GitHub Pages
         id: deployment
+        continue-on-error: true
+        uses: actions/deploy-pages@v4
+
+      - name: Wait before retry
+        if: steps.deployment.outcome == 'failure'
+        run: sleep 20
+
+      - name: Retry deploy to GitHub Pages
+        if: steps.deployment.outcome == 'failure'
+        id: deployment-retry
         uses: actions/deploy-pages@v4
