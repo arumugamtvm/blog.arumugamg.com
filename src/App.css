@@ -1,8 +1,9 @@
 /* ── Google Fonts ─────────────────────────────────────────────────────── */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&family=Fira+Code:wght@400;500&display=swap');
 
-/* ── Design System Tokens ──────────────────────────────────────────────── */
-:root {
+/* ── Design System Tokens (dark default) ──────────────────────────────── */
+:root,
+[data-theme="dark"] {
   --clr-bg:             #06070a;
   --clr-surface:        #0c0e17;
   --clr-surface-light:  #141725;
@@ -11,22 +12,45 @@
   --clr-text:           #a3abbf;
   --clr-text-dim:       #5d647a;
   --clr-heading:        #f0f3ff;
-  
-  /* Accent colors */
-  --clr-accent:         #6366f1; /* Indigo */
+  --clr-accent:         #6366f1;
   --clr-accent-glow:    rgba(99, 102, 241, 0.2);
-  --clr-accent-2:       #a78bfa; /* Light violet */
-  --clr-accent-3:       #ec4899; /* Pink */
-
-  /* Fonts */
+  --clr-accent-2:       #a78bfa;
+  --clr-accent-3:       #ec4899;
   --font-sans:          'Inter', system-ui, sans-serif;
   --font-display:       'Outfit', system-ui, sans-serif;
   --font-mono:          'Fira Code', ui-monospace, monospace;
-
-  /* Glassmorphism config */
   --glass-bg:           rgba(12, 14, 23, 0.7);
   --glass-blur:         24px;
   --shadow-card:        0 20px 50px rgba(0, 0, 0, 0.8), 0 1px 0 rgba(255, 255, 255, 0.03) inset;
+  --header-bg:          rgba(6, 7, 10, 0.8);
+  --code-bg:            #0a0c14;
+  --bg-radial-1:        rgba(99, 102, 241, 0.07);
+  --bg-radial-2:        rgba(167, 139, 250, 0.05);
+  --nav-active-bg:      rgba(99, 102, 241, 0.12);
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  --clr-bg:             #f4f6fb;
+  --clr-surface:        #ffffff;
+  --clr-surface-light:  #eef1f8;
+  --clr-border:         rgba(15, 23, 42, 0.08);
+  --clr-border-hover:   rgba(15, 23, 42, 0.16);
+  --clr-text:           #475569;
+  --clr-text-dim:       #64748b;
+  --clr-heading:        #0f172a;
+  --clr-accent:         #4f46e5;
+  --clr-accent-glow:    rgba(79, 70, 229, 0.15);
+  --clr-accent-2:       #7c3aed;
+  --clr-accent-3:       #db2777;
+  --glass-bg:           rgba(255, 255, 255, 0.85);
+  --shadow-card:        0 12px 40px rgba(15, 23, 42, 0.08), 0 1px 0 rgba(255, 255, 255, 0.8) inset;
+  --header-bg:          rgba(244, 246, 251, 0.9);
+  --code-bg:            #0f172a;
+  --bg-radial-1:        rgba(79, 70, 229, 0.08);
+  --bg-radial-2:        rgba(124, 58, 237, 0.06);
+  --nav-active-bg:      rgba(79, 70, 229, 0.1);
+  color-scheme: light;
 }
 
 /* ── Global Resets ────────────────────────────────────────────────────── */
@@ -44,9 +68,10 @@ body {
   overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
   background:
-    radial-gradient(circle 900px at 10% 20%, rgba(99, 102, 241, 0.07) 0%, transparent 60%),
-    radial-gradient(circle 800px at 80% 80%, rgba(167, 139, 250, 0.05) 0%, transparent 60%),
+    radial-gradient(circle 900px at 10% 20%, var(--bg-radial-1) 0%, transparent 60%),
+    radial-gradient(circle 800px at 80% 80%, var(--bg-radial-2) 0%, transparent 60%),
     var(--clr-bg);
+  transition: background-color 0.25s ease, color 0.25s ease;
 }
 
 /* ── App Shell & Headers ───────────────────────────────────────────────── */
@@ -70,7 +95,7 @@ body {
 
 .blog-global-header {
   height: 64px;
-  background: rgba(6, 7, 10, 0.8);
+  background: var(--header-bg);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--clr-border);
@@ -116,6 +141,47 @@ body {
 .header-actions {
   display: flex;
   align-items: center;
+  gap: 8px;
+}
+
+.theme-toggle {
+  border: 1px solid var(--clr-border) !important;
+}
+
+.theme-toggle:hover {
+  border-color: var(--clr-border-hover) !important;
+  background: var(--clr-surface-light) !important;
+}
+
+.theme-toggle-label {
+  font-size: 0.75rem;
+}
+
+@media (max-width: 520px) {
+  .theme-toggle-label {
+    display: none;
+  }
+}
+
+[data-theme="light"] .btn-ghost:hover {
+  background: rgba(15, 23, 42, 0.04);
+}
+
+[data-theme="light"] .blog-nav-item:hover {
+  background: rgba(15, 23, 42, 0.03);
+  border-color: var(--clr-border);
+}
+
+[data-theme="light"] .blog-nav-item.active {
+  background: var(--nav-active-bg);
+  border-color: rgba(79, 70, 229, 0.25);
+  box-shadow: 0 4px 15px rgba(15, 23, 42, 0.06);
+}
+
+[data-theme="light"] .markdown-body pre,
+[data-theme="light"] .markdown-body code {
+  background: var(--code-bg);
+  color: #e2e8f0;
 }
 
 /* Button style */
