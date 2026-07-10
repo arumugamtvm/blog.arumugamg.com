@@ -9,8 +9,9 @@
     <script>
       (function () {
         try {
+          var isManual = localStorage.getItem("blog-theme-manual") === "true";
           var t = localStorage.getItem("blog-theme");
-          if (t !== "light" && t !== "dark") {
+          if (!isManual || (t !== "light" && t !== "dark")) {
             t = window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
           }
           document.documentElement.setAttribute("data-theme", t);

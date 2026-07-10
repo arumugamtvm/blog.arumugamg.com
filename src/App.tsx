@@ -18,6 +18,7 @@ import {
   Sun,
   Moon,
   Check,
+  Copy,
 } from "lucide-react";
 import "./App.css";
 
@@ -30,8 +31,9 @@ type Theme = "dark" | "light";
 
 function getInitialTheme(): Theme {
   try {
+    const isManual = localStorage.getItem("blog-theme-manual") === "true";
     const stored = localStorage.getItem("blog-theme");
-    if (stored === "light" || stored === "dark") return stored;
+    if (isManual && (stored === "light" || stored === "dark")) return stored;
   } catch {
     /* ignore */
   }
@@ -48,10 +50,11 @@ export default function App() {
   const [blogLoading, setBlogLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [scrollProgress, setScrollProgress] = useState(0);
   const [theme, setTheme] = useState<Theme>(getInitialTheme);
   const [shareCopied, setShareCopied] = useState(false);
+  const [copyMDCopied, setCopyMDCopied] = useState(false);
   const articleRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -62,6 +65,22 @@ export default function App() {
       /* ignore */
     }
   }, [theme]);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: light)");
+    const handleChange = (e: MediaQueryListEvent) => {
+      try {
+        const isManual = localStorage.getItem("blog-theme-manual") === "true";
+        if (!isManual) {
+          setTheme(e.matches ? "light" : "dark");
+        }
+      } catch {
+        /* ignore */
+      }
+    };
+    mediaQuery.addEventListener("change", handleChange);
+    return () => mediaQuery.removeEventListener("change", handleChange);
+  }, []);
 
   useEffect(() => {
     async function loadBlogs() {
@@ -163,21 +182,26 @@ export default function App() {
               },
         });
 
-        const containers = document.querySelectorAll(".mermaid-raw");
+        const containers = document.querySelectorAll(".mermaid-unprocessed");
         for (let i = 0; i < containers.length; i++) {
           const container = containers[i] as HTMLElement;
-          const code = container.innerText.trim();
+          const code = container.textContent?.trim() || "";
+          if (!code) continue;
+
           const id = `mermaid-render-${i}-${Date.now()}`;
 
           try {
             const { svg } = await mermaid.render(id, code);
             const wrapper = container.parentElement;
             if (wrapper) {
-              wrapper.innerHTML = `<div class="mermaid-svg-wrapper">${svg}</div>`;
+              wrapper.innerHTML = `<div class="mermaid-svg-wrapper" data-raw-code="${encodeURIComponent(code)}">${svg}</div>`;
             }
           } catch (renderErr) {
             console.error("Mermaid render error:", renderErr);
-            container.innerHTML = `<div class="mermaid-error">Diagram render error</div>`;
+            const wrapper = container.parentElement;
+            if (wrapper) {
+              wrapper.innerHTML = `<div class="mermaid-error">Diagram render error. Please reload.</div>`;
+            }
           }
         }
       } catch (err) {
@@ -185,8 +209,23 @@ export default function App() {
       }
     };
 
-    const timer = setTimeout(renderMermaid, 150);
-    return () => clearTimeout(timer);
+    // Use MutationObserver to wait for the DOM to be updated before rendering mermaid
+    const observer = new MutationObserver((_mutations) => {
+      const hasMermaid = document.querySelector('.mermaid-unprocessed');
+      if (hasMermaid) {
+        renderMermaid();
+      }
+    });
+
+    if (articleRef.current) {
+      observer.observe(articleRef.current, { childList: true, subtree: true });
+      renderMermaid(); // initial check
+    } else {
+       const timer = setTimeout(renderMermaid, 150);
+       return () => clearTimeout(timer);
+    }
+
+    return () => observer.disconnect();
   }, [selectedBlog, blogLoading, theme]);
 
   const readingTime = useMemo(() => {
@@ -212,9 +251,6 @@ export default function App() {
     const rawMarkdown = selectedBlog.content;
     const renderer = new marked.Renderer();
     renderer.code = function ({ text, lang }) {
-      if (lang === "mermaid") {
-        return `<pre class="mermaid-wrapper"><div class="mermaid-raw">${text}</div></pre>`;
-      }
       const escapeTest = /[&<>"']/g;
       const escapeMap: Record<string, string> = {
         "&": "&amp;",
@@ -224,11 +260,86 @@ export default function App() {
         "'": "&#39;",
       };
       const cleanText = text.replace(escapeTest, (m) => escapeMap[m]);
-      return `<pre><code class="language-${lang || "text"}">${cleanText}</code></pre>`;
+
+      if (lang === "mermaid") {
+        return `<div class="mermaid-container"><div class="mermaid-actions"><button class="copy-mermaid-code" data-code="${encodeURIComponent(text)}">Copy Code</button><button class="copy-mermaid-img">Copy Image</button></div><pre class="mermaid-wrapper"><div class="mermaid-unprocessed">${cleanText}</div></pre></div>`;
+      }
+
+      return `<div class="code-block-wrapper"><button class="copy-code-btn" data-code="${encodeURIComponent(text)}">Copy Code</button><pre><code class="language-${lang || "text"}">${cleanText}</code></pre></div>`;
     };
 
     return marked.parse(rawMarkdown, { renderer }) as string;
   }, [selectedBlog]);
+
+  useEffect(() => {
+    if (!articleRef.current) return;
+    const article = articleRef.current;
+
+    const handleCopyClick = async (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+
+      if (target.classList.contains('copy-code-btn') || target.classList.contains('copy-mermaid-code')) {
+        const code = decodeURIComponent(target.getAttribute('data-code') || '');
+        if (code) {
+          try {
+            await navigator.clipboard.writeText(code);
+            const originalText = target.innerText;
+            target.innerText = 'Copied!';
+            setTimeout(() => { target.innerText = originalText; }, 2000);
+          } catch (err) {
+            console.error('Failed to copy code', err);
+          }
+        }
+      } else if (target.classList.contains('copy-mermaid-img')) {
+        const container = target.closest('.mermaid-container');
+        if (container) {
+          const svgEl = container.querySelector('svg');
+          if (svgEl) {
+            try {
+              const svgData = new XMLSerializer().serializeToString(svgEl);
+              const canvas = document.createElement('canvas');
+              const ctx = canvas.getContext('2d');
+              const img = new Image();
+
+              const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+              const DOMURL = window.URL || window.webkitURL || window;
+              const url = DOMURL.createObjectURL(svgBlob);
+
+              img.onload = async () => {
+                canvas.width = img.width;
+                canvas.height = img.height;
+                if (ctx) {
+                  ctx.fillStyle = theme === 'dark' ? '#0f111a' : '#ffffff';
+                  ctx.fillRect(0, 0, canvas.width, canvas.height);
+                  ctx.drawImage(img, 0, 0);
+                  canvas.toBlob(async (blob) => {
+                    if (blob) {
+                      try {
+                        const item = new ClipboardItem({ 'image/png': blob });
+                        await navigator.clipboard.write([item]);
+                        const originalText = target.innerText;
+                        target.innerText = 'Copied!';
+                        setTimeout(() => { target.innerText = originalText; }, 2000);
+                      } catch (err) {
+                        console.error('Failed to copy image to clipboard', err);
+                      }
+                    }
+                  }, 'image/png');
+                }
+                DOMURL.revokeObjectURL(url);
+              };
+              img.src = url;
+            } catch (err) {
+              console.error('Error generating image from SVG', err);
+            }
+          }
+        }
+      }
+    };
+
+    article.addEventListener('click', handleCopyClick);
+    return () => article.removeEventListener('click', handleCopyClick);
+  }, [htmlContent, theme]);
 
   const formatDate = (dateStr: string | null) => {
     if (!dateStr) return "Draft";
@@ -254,7 +365,25 @@ export default function App() {
     }
   };
 
-  const toggleTheme = () => setTheme((t) => (t === "dark" ? "light" : "dark"));
+  const handleCopyMD = async () => {
+    if (!selectedBlog) return;
+    try {
+      await navigator.clipboard.writeText(selectedBlog.content);
+      setCopyMDCopied(true);
+      setTimeout(() => setCopyMDCopied(false), 2000);
+    } catch {
+      setCopyMDCopied(false);
+    }
+  };
+
+  const toggleTheme = () => {
+    try {
+      localStorage.setItem("blog-theme-manual", "true");
+    } catch {
+      /* ignore */
+    }
+    setTheme((t) => (t === "dark" ? "light" : "dark"));
+  };
 
   return (
     <div className="blog-app-shell">
@@ -406,6 +535,14 @@ export default function App() {
                     </div>
                   </div>
                   <div className="footer-actions">
+                    <button
+                      className="btn btn-ghost btn-xs"
+                      onClick={handleCopyMD}
+                      aria-label="Copy article markdown"
+                    >
+                      {copyMDCopied ? <Check size={13} /> : <Copy size={13} />}
+                      <span>{copyMDCopied ? "Copied" : "Copy MD"}</span>
+                    </button>
                     <button
                       className="btn btn-ghost btn-xs"
                       onClick={handleShare}

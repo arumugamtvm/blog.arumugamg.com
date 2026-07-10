@@ -108,7 +108,7 @@ body {
 }
 
 .sidebar-toggle {
-  display: none;
+  display: flex;
   color: var(--clr-text-dim);
   background: transparent;
   border: none;
@@ -249,6 +249,20 @@ body {
   flex-shrink: 0;
   transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), width 0.3s, background 0.25s ease;
   z-index: 90;
+
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  height: 100%;
+}
+
+.blog-sidebar.closed {
+  transform: translateX(-100%);
+}
+
+.blog-sidebar.open {
+  transform: translateX(0);
 }
 
 .sidebar-search {
@@ -712,26 +726,11 @@ body {
 
 /* ── Responsive Layout Overrides ── */
 @media (max-width: 868px) {
-  .sidebar-toggle {
-    display: flex;
-  }
-  
   .blog-sidebar {
-    position: absolute;
-    top: 64px;
-    left: 0;
-    bottom: 0;
+    top: 0;
     background: var(--clr-surface);
     box-shadow: var(--shadow-card);
     transition: transform 0.25s ease-in-out;
-  }
-
-  .blog-sidebar.closed {
-    transform: translateX(-100%);
-  }
-  
-  .blog-sidebar.open {
-    transform: translateX(0);
   }
 
   .blog-article {
@@ -741,4 +740,66 @@ body {
   .article-title {
     font-size: 1.8rem;
   }
+}
+
+/* Code copy and Mermaid actions */
+.code-block-wrapper, .mermaid-container {
+  position: relative;
+  margin: 32px 0;
+}
+
+.code-block-wrapper pre, .mermaid-container .mermaid-wrapper {
+  margin: 0;
+}
+
+.copy-code-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: var(--clr-surface-light);
+  border: 1px solid var(--clr-border);
+  color: var(--clr-text-dim);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 0.7rem;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition: all 0.2s;
+  z-index: 10;
+  opacity: 0;
+}
+
+.code-block-wrapper:hover .copy-code-btn {
+  opacity: 1;
+}
+
+.copy-code-btn:hover {
+  background: var(--clr-accent);
+  color: #fff;
+  border-color: var(--clr-accent);
+}
+
+.mermaid-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.copy-mermaid-code, .copy-mermaid-img {
+  background: var(--clr-surface-light);
+  border: 1px solid var(--clr-border);
+  color: var(--clr-text-dim);
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 0.7rem;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.copy-mermaid-code:hover, .copy-mermaid-img:hover {
+  background: var(--clr-accent);
+  color: #fff;
+  border-color: var(--clr-accent);
 }
