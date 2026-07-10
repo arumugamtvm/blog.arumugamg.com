@@ -240,12 +240,14 @@ body {
 /* ── Sidebar styling ── */
 .blog-sidebar {
   width: 320px;
-  background: rgba(12, 14, 23, 0.85);
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
   border-right: 1px solid var(--clr-border);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
-  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), width 0.3s;
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), width 0.3s, background 0.25s ease;
   z-index: 90;
 }
 
@@ -254,7 +256,7 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
-  background: rgba(0, 0, 0, 0.15);
+  background: var(--clr-surface-light);
   border-bottom: 1px solid var(--clr-border);
 }
 
@@ -580,17 +582,17 @@ body {
 }
 
 .markdown-body pre {
-  background: #090a0f !important;
+  background: var(--code-bg) !important;
   border: 1px solid var(--clr-border);
   padding: 20px;
   border-radius: 12px;
   overflow-x: auto;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  box-shadow: var(--shadow-card);
 }
 
 /* Mermaid Wrapper */
 .mermaid-wrapper {
-  background: #0a0c14 !important;
+  background: var(--code-bg) !important;
   border: 1px solid var(--clr-border);
   border-radius: 12px;
   padding: 24px;
@@ -719,8 +721,8 @@ body {
     top: 64px;
     left: 0;
     bottom: 0;
-    background: #090a10;
-    box-shadow: 10px 0 30px rgba(0,0,0,0.7);
+    background: var(--clr-surface);
+    box-shadow: var(--shadow-card);
     transition: transform 0.25s ease-in-out;
   }
 
