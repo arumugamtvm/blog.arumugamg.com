@@ -250,6 +250,13 @@ export default function App() {
 
     const rawMarkdown = selectedBlog.content;
     const renderer = new marked.Renderer();
+
+    // Override heading to correctly set ids for Table of Contents navigation
+    renderer.heading = function ({ text, depth }) {
+      const escapedText = text.toLowerCase().replace(/[^\w]+/g, '-');
+      return `<h${depth} id="${escapedText}">${text}</h${depth}>`;
+    };
+
     renderer.code = function ({ text, lang }) {
       const escapeTest = /[&<>"']/g;
       const escapeMap: Record<string, string> = {
