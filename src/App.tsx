@@ -93,8 +93,6 @@ export default function App() {
         if (hash) {
           const match = data.find((b) => b.slug === hash);
           if (match) setSelectedBlog(match);
-        } else if (data.length > 0) {
-          setSelectedBlog(data[0]);
         }
       } catch (err) {
         setError("Failed to load developer blogs. Please check back later.");
@@ -284,21 +282,24 @@ export default function App() {
 
     const handleCopyClick = async (e: MouseEvent) => {
       const target = e.target as HTMLElement;
+      const button = target.closest('button');
 
-      if (target.classList.contains('copy-code-btn') || target.classList.contains('copy-mermaid-code')) {
-        const code = decodeURIComponent(target.getAttribute('data-code') || '');
+      if (!button) return;
+
+      if (button.classList.contains('copy-code-btn') || button.classList.contains('copy-mermaid-code')) {
+        const code = decodeURIComponent(button.getAttribute('data-code') || '');
         if (code) {
           try {
             await navigator.clipboard.writeText(code);
-            const originalText = target.innerText;
-            target.innerText = 'Copied!';
-            setTimeout(() => { target.innerText = originalText; }, 2000);
+            const originalText = button.innerText;
+            button.innerText = 'Copied!';
+            setTimeout(() => { button.innerText = originalText; }, 2000);
           } catch (err) {
             console.error('Failed to copy code', err);
           }
         }
-      } else if (target.classList.contains('copy-mermaid-img')) {
-        const container = target.closest('.mermaid-container');
+      } else if (button.classList.contains('copy-mermaid-img')) {
+        const container = button.closest('.mermaid-container');
         if (container) {
           const svgEl = container.querySelector('svg');
           if (svgEl) {
@@ -308,9 +309,8 @@ export default function App() {
               const ctx = canvas.getContext('2d');
               const img = new Image();
 
-              const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
-              const DOMURL = window.URL || window.webkitURL || window;
-              const url = DOMURL.createObjectURL(svgBlob);
+              const base64Data = btoa(unescape(encodeURIComponent(svgData)));
+              const imgDataUrl = `data:image/svg+xml;base64,${base64Data}`;
 
               img.onload = async () => {
                 canvas.width = img.width;
@@ -333,9 +333,8 @@ export default function App() {
                     }
                   }, 'image/png');
                 }
-                DOMURL.revokeObjectURL(url);
               };
-              img.src = url;
+              img.src = imgDataUrl;
             } catch (err) {
               console.error('Error generating image from SVG', err);
             }
@@ -563,10 +562,28 @@ export default function App() {
               </footer>
             </article>
           ) : (
-            <div className="reader-empty-state">
-              <BookOpen size={48} className="text-dim" aria-hidden="true" />
-              <h2>No Article Selected</h2>
-              <p>Choose one of the developer logs from the sidebar list to start reading.</p>
+            <div className="home-blog-grid-container">
+              <div className="home-blog-header">
+                <BookOpen size={32} className="text-accent" aria-hidden="true" />
+                <h2>Available Articles</h2>
+              </div>
+              <div className="home-blog-grid">
+                {filteredBlogs.map((blog) => (
+                  <button
+                    key={blog.id}
+                    onClick={() => selectBlog(blog)}
+                    className="home-blog-card"
+                  >
+                    <h3>{blog.title}</h3>
+                    <div className="home-blog-meta">
+                      <span className="meta-date">
+                        <Calendar size={14} aria-hidden="true" />
+                        <span>{formatDate(blog.published_at)}</span>
+                      </span>
+                    </div>
+                  </button>
+                ))}
+              </div>
             </div>
           )}
         </main>
