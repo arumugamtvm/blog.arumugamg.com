@@ -43,6 +43,22 @@ function getInitialTheme(): Theme {
   return "dark";
 }
 
+/** Article slug from the URL path (e.g. /master-markdown-guide/ -> "master-markdown-guide"). */
+function getRouteSlug(): string | null {
+  if (typeof window === "undefined") return null;
+  const path = window.location.pathname.replace(/^\/+|\/+$/g, "");
+  if (!path || path === "index.html") return null;
+  const segments = path.split("/").filter(Boolean);
+  return segments[segments.length - 1] || null;
+}
+
+/** In-page section anchor from the URL hash (e.g. #best-practices -> "best-practices"). */
+function getRouteSection(): string | null {
+  if (typeof window === "undefined") return null;
+  const hash = window.location.hash.slice(1);
+  return hash || null;
+}
+
 export default function App() {
   const [blogs, setBlogs] = useState<Blog[]>([]);
   const [selectedBlog, setSelectedBlog] = useState<Blog | null>(null);
@@ -89,10 +105,22 @@ export default function App() {
         const data = await fetchPublishedBlogs();
         setBlogs(data);
 
-        const hash = window.location.hash.slice(1);
-        if (hash) {
-          const match = data.find((b) => b.slug === hash);
-          if (match) setSelectedBlog(match);
+        const slug = getRouteSlug();
+        if (slug) {
+          const match = data.find((b) => b.slug === slug);
+          if (match) {
+            setSelectedBlog(match);
+          } else {
+            try {
+              setBlogLoading(true);
+              const blog = await fetchBlogBySlug(slug);
+              setSelectedBlog(blog);
+            } catch {
+              /* unknown slug -> stay on home */
+            } finally {
+              setBlogLoading(false);
+            }
+          }
         }
       } catch (err) {
         setError("Failed to load developer blogs. Please check back later.");
@@ -104,36 +132,63 @@ export default function App() {
     loadBlogs();
   }, []);
 
+  // Back / forward navigation: re-resolve the article from the path.
   useEffect(() => {
-    const handleHashChange = async () => {
-      const hash = window.location.hash.slice(1);
-      if (!hash) return;
-
-      const matched = blogs.find((b) => b.slug === hash);
+    const handlePopState = async () => {
+      const slug = getRouteSlug();
+      if (!slug) {
+        setSelectedBlog(null);
+        return;
+      }
+      const matched = blogs.find((b) => b.slug === slug);
       if (matched) {
         setSelectedBlog(matched);
-      } else {
-        try {
-          setBlogLoading(true);
-          const blog = await fetchBlogBySlug(hash);
-          setSelectedBlog(blog);
-        } catch {
-          /* ignore */
-        } finally {
-          setBlogLoading(false);
-        }
+        return;
       }
+      try {
+        setBlogLoading(true);
+        const blog = await fetchBlogBySlug(slug);
+        setSelectedBlog(blog);
+      } catch {
+        setSelectedBlog(null);
+      } finally {
+        setBlogLoading(false);
+      }
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [blogs]);
+
+  // In-article anchor clicks: scroll to the heading without reloading.
+  useEffect(() => {
+    const handleHashChange = () => {
+      const section = getRouteSection();
+      if (!section) return;
+      const el = document.getElementById(section);
+      if (el) el.scrollIntoView({ block: "start", behavior: "instant" });
     };
     window.addEventListener("hashchange", handleHashChange);
     return () => window.removeEventListener("hashchange", handleHashChange);
-  }, [blogs]);
+  }, []);
 
   const selectBlog = (blog: Blog) => {
-    window.location.hash = blog.slug;
+    const path = `/${blog.slug}`;
+    if (window.location.pathname !== path) {
+      window.history.pushState({}, "", path);
+    }
     setSelectedBlog(blog);
+    document.querySelector(".blog-reader-pane")?.scrollTo({ top: 0, behavior: "instant" });
     if (window.innerWidth <= 868) {
       setSidebarOpen(false);
     }
+  };
+
+  const goHome = () => {
+    if (window.location.pathname !== "/") {
+      window.history.pushState({}, "", "/");
+    }
+    setSelectedBlog(null);
+    document.querySelector(".blog-reader-pane")?.scrollTo({ top: 0, behavior: "instant" });
   };
 
   useEffect(() => {
@@ -251,7 +306,10 @@ export default function App() {
 
     // Override heading to correctly set ids for Table of Contents navigation
     renderer.heading = function ({ text, depth }) {
-      const escapedText = text.toLowerCase().replace(/[^\w]+/g, '-');
+      const escapedText = text
+        .toLowerCase()
+        .replace(/[^\w]+/g, '-')
+        .replace(/^-+|-+$/g, '');
       return `<h${depth} id="${escapedText}">${text}</h${depth}>`;
     };
 
@@ -275,6 +333,44 @@ export default function App() {
 
     return marked.parse(rawMarkdown, { renderer }) as string;
   }, [selectedBlog]);
+
+  // Scroll to the section anchor once the article (and mermaid diagrams) have
+  // finished rendering. A single scrollIntoView after layout settles lands the
+  // heading at the top (clamped by the pane's max scroll) without cascading.
+  useEffect(() => {
+    if (!selectedBlog || blogLoading) return;
+    const section = getRouteSection();
+    if (!section) return;
+
+    let cancelled = false;
+    let waited = 0;
+
+    const doScroll = () => {
+      if (cancelled) return;
+      document.getElementById(section)?.scrollIntoView({ block: "start", behavior: "instant" });
+    };
+
+    const tick = () => {
+      if (cancelled) return;
+      const el = document.getElementById(section);
+      const pending = document.querySelectorAll(".mermaid-unprocessed").length;
+      waited += 200;
+      if (el && pending === 0) {
+        // Layout stable — short delay then a single, clamped scroll.
+        setTimeout(doScroll, 400);
+      } else if (waited < 8000) {
+        setTimeout(tick, 200);
+      } else {
+        doScroll();
+      }
+    };
+
+    const timer = setTimeout(tick, 200);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [selectedBlog, blogLoading, htmlContent]);
 
   useEffect(() => {
     if (!articleRef.current) return;
@@ -304,35 +400,74 @@ export default function App() {
           const svgEl = container.querySelector('svg');
           if (svgEl) {
             try {
-              const svgData = new XMLSerializer().serializeToString(svgEl);
-              const canvas = document.createElement('canvas');
-              const ctx = canvas.getContext('2d');
-              const img = new Image();
+              // Determine the diagram's natural size (not the CSS-scaled display size).
+              let natW = parseFloat(svgEl.getAttribute('width') || '');
+              let natH = parseFloat(svgEl.getAttribute('height') || '');
+              if ((!natW || !natH) && svgEl.viewBox && svgEl.viewBox.baseVal) {
+                const vb = svgEl.viewBox.baseVal;
+                if (vb.width && vb.height) {
+                  natW = vb.width;
+                  natH = vb.height;
+                }
+              }
+              if (!natW || !natH) {
+                const rect = svgEl.getBoundingClientRect();
+                natW = rect.width;
+                natH = rect.height;
+              }
+              if (!natW || !natH) {
+                natW = 800;
+                natH = 600;
+              }
 
+              // High-resolution rasterisation so the copy stays crisp on every
+              // screen size. At least 3x (or 2x devicePixelRatio), capped to a
+              // 4096px longest side to avoid oversized canvases.
+              const dpr = window.devicePixelRatio || 1;
+              let scale = Math.max(3, dpr * 2);
+              const MAX_DIM = 4096;
+              if (Math.max(natW, natH) * scale > MAX_DIM) {
+                scale = MAX_DIM / Math.max(natW, natH);
+              }
+
+              // Clone and pin explicit dimensions + namespace so the SVG loads
+              // standalone at its natural size.
+              const clone = svgEl.cloneNode(true) as SVGGraphicsElement;
+              clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+              clone.setAttribute('width', String(natW));
+              clone.setAttribute('height', String(natH));
+
+              const svgData = new XMLSerializer().serializeToString(clone);
               const base64Data = btoa(unescape(encodeURIComponent(svgData)));
               const imgDataUrl = `data:image/svg+xml;base64,${base64Data}`;
+              const img = new Image();
 
               img.onload = async () => {
-                canvas.width = img.width;
-                canvas.height = img.height;
-                if (ctx) {
-                  ctx.fillStyle = theme === 'dark' ? '#0f111a' : '#ffffff';
-                  ctx.fillRect(0, 0, canvas.width, canvas.height);
-                  ctx.drawImage(img, 0, 0);
-                  canvas.toBlob(async (blob) => {
-                    if (blob) {
-                      try {
-                        const item = new ClipboardItem({ 'image/png': blob });
-                        await navigator.clipboard.write([item]);
-                        const originalText = target.innerText;
-                        target.innerText = 'Copied!';
-                        setTimeout(() => { target.innerText = originalText; }, 2000);
-                      } catch (err) {
-                        console.error('Failed to copy image to clipboard', err);
-                      }
+                const canvas = document.createElement('canvas');
+                canvas.width = Math.round(natW * scale);
+                canvas.height = Math.round(natH * scale);
+                const ctx = canvas.getContext('2d');
+                if (!ctx) return;
+                ctx.scale(scale, scale);
+                ctx.fillStyle = theme === 'dark' ? '#0f111a' : '#ffffff';
+                ctx.fillRect(0, 0, natW, natH);
+                ctx.imageSmoothingEnabled = true;
+                ctx.imageSmoothingQuality = 'high';
+                ctx.drawImage(img, 0, 0, natW, natH);
+                // PNG is lossless — no quality loss from compression.
+                canvas.toBlob(async (blob) => {
+                  if (blob) {
+                    try {
+                      const item = new ClipboardItem({ 'image/png': blob });
+                      await navigator.clipboard.write([item]);
+                      const originalText = target.innerText;
+                      target.innerText = 'Copied!';
+                      setTimeout(() => { target.innerText = originalText; }, 2000);
+                    } catch (err) {
+                      console.error('Failed to copy image to clipboard', err);
                     }
-                  }, 'image/png');
-                }
+                  }
+                }, 'image/png');
               };
               img.src = imgDataUrl;
             } catch (err) {
@@ -346,6 +481,36 @@ export default function App() {
     article.addEventListener('click', handleCopyClick);
     return () => article.removeEventListener('click', handleCopyClick);
   }, [htmlContent, theme]);
+
+  // Intercept in-article anchor links (e.g. Table of Contents) and scroll the
+  // reader pane directly, avoiding conflicts with native hash navigation.
+  useEffect(() => {
+    const article = articleRef.current;
+    if (!article) return;
+
+    const handleAnchorClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      const anchor = target.closest('a');
+      if (!anchor) return;
+      const href = anchor.getAttribute('href') || '';
+      if (!href.startsWith('#')) return;
+      const id = href.slice(1);
+      if (!id) return;
+      const el = document.getElementById(id);
+      if (!el) return;
+
+      e.preventDefault();
+      if (window.location.hash !== href) {
+        window.history.replaceState(null, "", `${window.location.pathname}${href}`);
+      }
+      // Single clamped scroll (mermaid is already rendered by the time a user
+      // clicks a TOC link, so layout is stable).
+      el.scrollIntoView({ block: "start", behavior: "instant" });
+    };
+
+    article.addEventListener('click', handleAnchorClick);
+    return () => article.removeEventListener('click', handleAnchorClick);
+  }, [htmlContent, selectedBlog, blogLoading]);
 
   const formatDate = (dateStr: string | null) => {
     if (!dateStr) return "Draft";
@@ -415,10 +580,16 @@ export default function App() {
           {sidebarOpen ? <X size={20} /> : <Menu size={20} />}
         </button>
 
-        <div className="blog-logo">
+        <button
+          type="button"
+          className="blog-logo"
+          onClick={goHome}
+          aria-label="Go to home"
+          title="Home"
+        >
           <Terminal size={18} className="text-accent" aria-hidden="true" />
           <span>blog.arumugamg.com</span>
-        </div>
+        </button>
 
         <div className="header-actions">
           <button

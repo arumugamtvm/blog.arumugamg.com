@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>blog.arumugamg.com</title>
+    <script>
+      // GitHub Pages SPA fallback: unknown paths (e.g. /master-markdown-guide)
+      // hit this 404 page. Persist the intended URL and redirect to the app
+      // shell, which restores the path via the History API so client-side
+      // routing can resolve the article and section anchor.
+      (function () {
+        try {
+          sessionStorage.setItem(
+            "blog-spa-redirect",
+            window.location.pathname + window.location.search + window.location.hash
+          );
+        } catch (e) {
+          /* ignore */
+        }
+        window.location.replace("/");
+      })();
+    </script>
+  </head>
+  <body></body>
+</html>
