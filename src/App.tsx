@@ -121,6 +121,9 @@ export default function App() {
         setSelectedBlog(null);
         return;
       }
+      if (selectedBlog && selectedBlog.slug === slug) {
+        return;
+      }
       const match = blogs.find((b) => b.slug === slug);
       if (match) {
         setSelectedBlog(match);
@@ -137,7 +140,7 @@ export default function App() {
       }
     }
     resolveBlog();
-  }, [slug, blogs]);
+  }, [slug, blogs, selectedBlog]);
 
   // In-article anchor clicks: scroll to the heading without reloading.
   useEffect(() => {
@@ -243,6 +246,8 @@ export default function App() {
 
     Prism.highlightAll();
 
+    let active = true;
+
     const renderMermaid = async () => {
       try {
         const isLight = theme === "light";
@@ -267,7 +272,10 @@ export default function App() {
 
         const containers = document.querySelectorAll(".mermaid-unprocessed");
         for (let i = 0; i < containers.length; i++) {
+          if (!active) return;
           const container = containers[i] as HTMLElement;
+          if (!document.body.contains(container)) continue;
+
           const code = container.textContent?.trim() || "";
           if (!code) continue;
 
@@ -275,14 +283,16 @@ export default function App() {
 
           try {
             const { svg } = await mermaid.render(id, code);
+            if (!active) return;
             const wrapper = container.parentElement;
-            if (wrapper) {
+            if (wrapper && document.body.contains(wrapper)) {
               wrapper.innerHTML = `<div class="mermaid-svg-wrapper" data-raw-code="${encodeURIComponent(code)}">${svg}</div>`;
             }
           } catch (renderErr) {
             console.error("Mermaid render error:", renderErr);
+            if (!active) return;
             const wrapper = container.parentElement;
-            if (wrapper) {
+            if (wrapper && document.body.contains(wrapper)) {
               wrapper.innerHTML = `<div class="mermaid-error">Diagram render error. Please reload.</div>`;
             }
           }
@@ -294,7 +304,10 @@ export default function App() {
 
     // Render after React updates the DOM with htmlContent
     const timer = setTimeout(renderMermaid, 50);
-    return () => clearTimeout(timer);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
   }, [selectedBlog, blogLoading, htmlContent, theme]);
 
   // Scroll to the section anchor once the article (and mermaid diagrams) have
@@ -681,7 +694,9 @@ export default function App() {
               <div
                 className="markdown-body"
                 dangerouslySetInnerHTML={{
-                  __html: DOMPurify.sanitize(htmlContent),
+                  __html: DOMPurify.sanitize(htmlContent, {
+                    ADD_ATTR: ["data-code"],
+                  }),
                 }}
               />
 
