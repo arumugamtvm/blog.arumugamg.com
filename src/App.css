@@ -612,7 +612,7 @@ body {
 
 /* Mermaid Wrapper */
 .mermaid-wrapper {
-  background: var(--code-bg) !important;
+  background: var(--clr-surface) !important;
   border: 1px solid var(--clr-border);
   border-radius: 12px;
   padding: 24px;
