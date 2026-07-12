@@ -611,7 +611,7 @@ body {
 }
 
 /* Mermaid Wrapper */
-.mermaid-wrapper {
+.markdown-body pre.mermaid-wrapper {
   background: var(--clr-surface) !important;
   border: 1px solid var(--clr-border);
   border-radius: 12px;
