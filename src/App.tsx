@@ -1,10 +1,12 @@
 import { useState, useEffect, useMemo, useRef } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 import { fetchPublishedBlogs, fetchBlogBySlug } from "./api";
 import type { Blog } from "./types";
 import { marked } from "marked";
 import mermaid from "mermaid";
 import Prism from "prismjs";
 import "prismjs/themes/prism-tomorrow.css";
+import DOMPurify from "dompurify";
 import {
   BookOpen,
   Calendar,
@@ -37,19 +39,13 @@ function getInitialTheme(): Theme {
   } catch {
     /* ignore */
   }
-  if (typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: light)").matches) {
+  if (
+    typeof window !== "undefined" &&
+    window.matchMedia("(prefers-color-scheme: light)").matches
+  ) {
     return "light";
   }
   return "dark";
-}
-
-/** Article slug from the URL path (e.g. /master-markdown-guide/ -> "master-markdown-guide"). */
-function getRouteSlug(): string | null {
-  if (typeof window === "undefined") return null;
-  const path = window.location.pathname.replace(/^\/+|\/+$/g, "");
-  if (!path || path === "index.html") return null;
-  const segments = path.split("/").filter(Boolean);
-  return segments[segments.length - 1] || null;
 }
 
 /** In-page section anchor from the URL hash (e.g. #best-practices -> "best-practices"). */
@@ -60,6 +56,9 @@ function getRouteSection(): string | null {
 }
 
 export default function App() {
+  const navigate = useNavigate();
+  const { slug } = useParams<{ slug: string }>();
+
   const [blogs, setBlogs] = useState<Blog[]>([]);
   const [selectedBlog, setSelectedBlog] = useState<Blog | null>(null);
   const [loading, setLoading] = useState(true);
@@ -98,30 +97,13 @@ export default function App() {
     return () => mediaQuery.removeEventListener("change", handleChange);
   }, []);
 
+  // Fetch blogs list once on mount
   useEffect(() => {
     async function loadBlogs() {
       try {
         setLoading(true);
         const data = await fetchPublishedBlogs();
         setBlogs(data);
-
-        const slug = getRouteSlug();
-        if (slug) {
-          const match = data.find((b) => b.slug === slug);
-          if (match) {
-            setSelectedBlog(match);
-          } else {
-            try {
-              setBlogLoading(true);
-              const blog = await fetchBlogBySlug(slug);
-              setSelectedBlog(blog);
-            } catch {
-              /* unknown slug -> stay on home */
-            } finally {
-              setBlogLoading(false);
-            }
-          }
-        }
       } catch (err) {
         setError("Failed to load developer blogs. Please check back later.");
         console.error(err);
@@ -132,17 +114,16 @@ export default function App() {
     loadBlogs();
   }, []);
 
-  // Back / forward navigation: re-resolve the article from the path.
+  // Resolve selected blog from path slug param
   useEffect(() => {
-    const handlePopState = async () => {
-      const slug = getRouteSlug();
+    async function resolveBlog() {
       if (!slug) {
         setSelectedBlog(null);
         return;
       }
-      const matched = blogs.find((b) => b.slug === slug);
-      if (matched) {
-        setSelectedBlog(matched);
+      const match = blogs.find((b) => b.slug === slug);
+      if (match) {
+        setSelectedBlog(match);
         return;
       }
       try {
@@ -154,10 +135,9 @@ export default function App() {
       } finally {
         setBlogLoading(false);
       }
-    };
-    window.addEventListener("popstate", handlePopState);
-    return () => window.removeEventListener("popstate", handlePopState);
-  }, [blogs]);
+    }
+    resolveBlog();
+  }, [slug, blogs]);
 
   // In-article anchor clicks: scroll to the heading without reloading.
   useEffect(() => {
@@ -172,23 +152,20 @@ export default function App() {
   }, []);
 
   const selectBlog = (blog: Blog) => {
-    const path = `/${blog.slug}`;
-    if (window.location.pathname !== path) {
-      window.history.pushState({}, "", path);
-    }
-    setSelectedBlog(blog);
-    document.querySelector(".blog-reader-pane")?.scrollTo({ top: 0, behavior: "instant" });
+    navigate(`/${blog.slug}`);
+    document
+      .querySelector(".blog-reader-pane")
+      ?.scrollTo({ top: 0, behavior: "instant" });
     if (window.innerWidth <= 868) {
       setSidebarOpen(false);
     }
   };
 
   const goHome = () => {
-    if (window.location.pathname !== "/") {
-      window.history.pushState({}, "", "/");
-    }
-    setSelectedBlog(null);
-    document.querySelector(".blog-reader-pane")?.scrollTo({ top: 0, behavior: "instant" });
+    navigate("/");
+    document
+      .querySelector(".blog-reader-pane")
+      ?.scrollTo({ top: 0, behavior: "instant" });
   };
 
   useEffect(() => {
@@ -208,8 +185,61 @@ export default function App() {
     return () => window.removeEventListener("scroll", handleScroll);
   }, [selectedBlog, blogLoading]);
 
+  const readingTime = useMemo(() => {
+    if (!selectedBlog) return 1;
+    const words = selectedBlog.content.split(/\s+/).length;
+    return Math.max(1, Math.round(words / 220));
+  }, [selectedBlog]);
+
+  const filteredBlogs = useMemo(() => {
+    return blogs.filter((blog) => {
+      const query = searchQuery.toLowerCase().trim();
+      if (!query) return true;
+      return (
+        blog.title.toLowerCase().includes(query) ||
+        blog.content.toLowerCase().includes(query)
+      );
+    });
+  }, [blogs, searchQuery]);
+
+  const htmlContent = useMemo(() => {
+    if (!selectedBlog) return "";
+
+    const rawMarkdown = selectedBlog.content;
+    const renderer = new marked.Renderer();
+
+    // Override heading to correctly set ids for Table of Contents navigation
+    renderer.heading = function ({ text, depth }) {
+      const escapedText = text
+        .toLowerCase()
+        .replace(/[^\w]+/g, "-")
+        .replace(/^-+|-+$/g, "");
+      return `<h${depth} id="${escapedText}">${text}</h${depth}>`;
+    };
+
+    renderer.code = function ({ text, lang }) {
+      const escapeTest = /[&<>"']/g;
+      const escapeMap: Record<string, string> = {
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      };
+      const cleanText = text.replace(escapeTest, (m) => escapeMap[m]);
+
+      if (lang === "mermaid") {
+        return `<div class="mermaid-container"><div class="mermaid-actions"><button class="copy-mermaid-code" data-code="${encodeURIComponent(text)}">Copy Code</button><button class="copy-mermaid-img">Copy Image</button></div><pre class="mermaid-wrapper"><div class="mermaid-unprocessed">${cleanText}</div></pre></div>`;
+      }
+
+      return `<div class="code-block-wrapper"><button class="copy-code-btn" data-code="${encodeURIComponent(text)}">Copy Code</button><pre><code class="language-${lang || "text"}">${cleanText}</code></pre></div>`;
+    };
+
+    return marked.parse(rawMarkdown, { renderer }) as string;
+  }, [selectedBlog]);
+
   useEffect(() => {
-    if (!selectedBlog || blogLoading) return;
+    if (!selectedBlog || blogLoading || !htmlContent) return;
 
     Prism.highlightAll();
 
@@ -262,77 +292,10 @@ export default function App() {
       }
     };
 
-    // Use MutationObserver to wait for the DOM to be updated before rendering mermaid
-    const observer = new MutationObserver((_mutations) => {
-      const hasMermaid = document.querySelector('.mermaid-unprocessed');
-      if (hasMermaid) {
-        renderMermaid();
-      }
-    });
-
-    if (articleRef.current) {
-      observer.observe(articleRef.current, { childList: true, subtree: true });
-      renderMermaid(); // initial check
-    } else {
-       const timer = setTimeout(renderMermaid, 150);
-       return () => clearTimeout(timer);
-    }
-
-    return () => observer.disconnect();
-  }, [selectedBlog, blogLoading, theme]);
-
-  const readingTime = useMemo(() => {
-    if (!selectedBlog) return 1;
-    const words = selectedBlog.content.split(/\s+/).length;
-    return Math.max(1, Math.round(words / 220));
-  }, [selectedBlog]);
-
-  const filteredBlogs = useMemo(() => {
-    return blogs.filter((blog) => {
-      const query = searchQuery.toLowerCase().trim();
-      if (!query) return true;
-      return (
-        blog.title.toLowerCase().includes(query) ||
-        blog.content.toLowerCase().includes(query)
-      );
-    });
-  }, [blogs, searchQuery]);
-
-  const htmlContent = useMemo(() => {
-    if (!selectedBlog) return "";
-
-    const rawMarkdown = selectedBlog.content;
-    const renderer = new marked.Renderer();
-
-    // Override heading to correctly set ids for Table of Contents navigation
-    renderer.heading = function ({ text, depth }) {
-      const escapedText = text
-        .toLowerCase()
-        .replace(/[^\w]+/g, '-')
-        .replace(/^-+|-+$/g, '');
-      return `<h${depth} id="${escapedText}">${text}</h${depth}>`;
-    };
-
-    renderer.code = function ({ text, lang }) {
-      const escapeTest = /[&<>"']/g;
-      const escapeMap: Record<string, string> = {
-        "&": "&amp;",
-        "<": "&lt;",
-        ">": "&gt;",
-        '"': "&quot;",
-        "'": "&#39;",
-      };
-      const cleanText = text.replace(escapeTest, (m) => escapeMap[m]);
-
-      if (lang === "mermaid") {
-        return `<div class="mermaid-container"><div class="mermaid-actions"><button class="copy-mermaid-code" data-code="${encodeURIComponent(text)}">Copy Code</button><button class="copy-mermaid-img">Copy Image</button></div><pre class="mermaid-wrapper"><div class="mermaid-unprocessed">${cleanText}</div></pre></div>`;
-      }
-
-      return `<div class="code-block-wrapper"><button class="copy-code-btn" data-code="${encodeURIComponent(text)}">Copy Code</button><pre><code class="language-${lang || "text"}">${cleanText}</code></pre></div>`;
-    };
-
-    return marked.parse(rawMarkdown, { renderer }) as string;
-  }, [selectedBlog]);
+    // Render after React updates the DOM with htmlContent
+    const timer = setTimeout(renderMermaid, 50);
+    return () => clearTimeout(timer);
+  }, [selectedBlog, blogLoading, htmlContent, theme]);
 
   // Scroll to the section anchor once the article (and mermaid diagrams) have
   // finished rendering. A single scrollIntoView after layout settles lands the
@@ -347,7 +310,9 @@ export default function App() {
 
     const doScroll = () => {
       if (cancelled) return;
-      document.getElementById(section)?.scrollIntoView({ block: "start", behavior: "instant" });
+      document
+        .getElementById(section)
+        ?.scrollIntoView({ block: "start", behavior: "instant" });
     };
 
     const tick = () => {
@@ -378,31 +343,36 @@ export default function App() {
 
     const handleCopyClick = async (e: MouseEvent) => {
       const target = e.target as HTMLElement;
-      const button = target.closest('button');
+      const button = target.closest("button");
 
       if (!button) return;
 
-      if (button.classList.contains('copy-code-btn') || button.classList.contains('copy-mermaid-code')) {
-        const code = decodeURIComponent(button.getAttribute('data-code') || '');
+      if (
+        button.classList.contains("copy-code-btn") ||
+        button.classList.contains("copy-mermaid-code")
+      ) {
+        const code = decodeURIComponent(button.getAttribute("data-code") || "");
         if (code) {
           try {
             await navigator.clipboard.writeText(code);
             const originalText = button.innerText;
-            button.innerText = 'Copied!';
-            setTimeout(() => { button.innerText = originalText; }, 2000);
+            button.innerText = "Copied!";
+            setTimeout(() => {
+              button.innerText = originalText;
+            }, 2000);
           } catch (err) {
-            console.error('Failed to copy code', err);
+            console.error("Failed to copy code", err);
           }
         }
-      } else if (button.classList.contains('copy-mermaid-img')) {
-        const container = button.closest('.mermaid-container');
+      } else if (button.classList.contains("copy-mermaid-img")) {
+        const container = button.closest(".mermaid-container");
         if (container) {
-          const svgEl = container.querySelector('svg');
+          const svgEl = container.querySelector("svg");
           if (svgEl) {
             try {
               // Determine the diagram's natural size (not the CSS-scaled display size).
-              let natW = parseFloat(svgEl.getAttribute('width') || '');
-              let natH = parseFloat(svgEl.getAttribute('height') || '');
+              let natW = parseFloat(svgEl.getAttribute("width") || "");
+              let natH = parseFloat(svgEl.getAttribute("height") || "");
               if ((!natW || !natH) && svgEl.viewBox && svgEl.viewBox.baseVal) {
                 const vb = svgEl.viewBox.baseVal;
                 if (vb.width && vb.height) {
@@ -433,9 +403,9 @@ export default function App() {
               // Clone and pin explicit dimensions + namespace so the SVG loads
               // standalone at its natural size.
               const clone = svgEl.cloneNode(true) as SVGGraphicsElement;
-              clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-              clone.setAttribute('width', String(natW));
-              clone.setAttribute('height', String(natH));
+              clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+              clone.setAttribute("width", String(natW));
+              clone.setAttribute("height", String(natH));
 
               const svgData = new XMLSerializer().serializeToString(clone);
               const base64Data = btoa(unescape(encodeURIComponent(svgData)));
@@ -443,43 +413,45 @@ export default function App() {
               const img = new Image();
 
               img.onload = async () => {
-                const canvas = document.createElement('canvas');
+                const canvas = document.createElement("canvas");
                 canvas.width = Math.round(natW * scale);
                 canvas.height = Math.round(natH * scale);
-                const ctx = canvas.getContext('2d');
+                const ctx = canvas.getContext("2d");
                 if (!ctx) return;
                 ctx.scale(scale, scale);
-                ctx.fillStyle = theme === 'dark' ? '#0f111a' : '#ffffff';
+                ctx.fillStyle = theme === "dark" ? "#0f111a" : "#ffffff";
                 ctx.fillRect(0, 0, natW, natH);
                 ctx.imageSmoothingEnabled = true;
-                ctx.imageSmoothingQuality = 'high';
+                ctx.imageSmoothingQuality = "high";
                 ctx.drawImage(img, 0, 0, natW, natH);
                 // PNG is lossless — no quality loss from compression.
                 canvas.toBlob(async (blob) => {
                   if (blob) {
                     try {
-                      const item = new ClipboardItem({ 'image/png': blob });
+                      const item = new ClipboardItem({ "image/png": blob });
                       await navigator.clipboard.write([item]);
                       const originalText = target.innerText;
-                      target.innerText = 'Copied!';
-                      setTimeout(() => { target.innerText = originalText; }, 2000);
+                      target.innerText = "Copied!";
+                      setTimeout(() => {
+                        target.innerText = originalText;
+                      }, 2000);
                     } catch (err) {
-                      console.error('Failed to copy image to clipboard', err);
+                      console.error("Failed to copy image to clipboard", err);
                     }
                   }
-                }, 'image/png');
+                }, "image/png");
               };
               img.src = imgDataUrl;
             } catch (err) {
-              console.error('Error generating image from SVG', err);
+              console.error("Error generating image from SVG", err);
             }
           }
         }
       }
     };
 
-    article.addEventListener('click', handleCopyClick);
-    return () => article.removeEventListener('click', handleCopyClick);
+    article.addEventListener("click", handleCopyClick);
+    return () => article.removeEventListener("click", handleCopyClick);
   }, [htmlContent, theme]);
 
   // Intercept in-article anchor links (e.g. Table of Contents) and scroll the
@@ -490,10 +462,10 @@ export default function App() {
 
     const handleAnchorClick = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
-      const anchor = target.closest('a');
+      const anchor = target.closest("a");
       if (!anchor) return;
-      const href = anchor.getAttribute('href') || '';
-      if (!href.startsWith('#')) return;
+      const href = anchor.getAttribute("href") || "";
+      if (!href.startsWith("#")) return;
       const id = href.slice(1);
       if (!id) return;
       const el = document.getElementById(id);
@@ -501,15 +473,19 @@ export default function App() {
 
       e.preventDefault();
       if (window.location.hash !== href) {
-        window.history.replaceState(null, "", `${window.location.pathname}${href}`);
+        window.history.replaceState(
+          null,
+          "",
+          `${window.location.pathname}${href}`,
+        );
       }
       // Single clamped scroll (mermaid is already rendered by the time a user
       // clicks a TOC link, so layout is stable).
       el.scrollIntoView({ block: "start", behavior: "instant" });
     };
 
-    article.addEventListener('click', handleAnchorClick);
-    return () => article.removeEventListener('click', handleAnchorClick);
+    article.addEventListener("click", handleAnchorClick);
+    return () => article.removeEventListener("click", handleAnchorClick);
   }, [htmlContent, selectedBlog, blogLoading]);
 
   const formatDate = (dateStr: string | null) => {
@@ -596,11 +572,17 @@ export default function App() {
             type="button"
             className="btn btn-ghost btn-sm theme-toggle"
             onClick={toggleTheme}
-            aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+            aria-label={
+              theme === "dark"
+                ? "Switch to light theme"
+                : "Switch to dark theme"
+            }
             title={theme === "dark" ? "Light mode" : "Dark mode"}
           >
             {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
-            <span className="theme-toggle-label">{theme === "dark" ? "Light" : "Dark"}</span>
+            <span className="theme-toggle-label">
+              {theme === "dark" ? "Light" : "Dark"}
+            </span>
           </button>
         </div>
       </header>
@@ -681,7 +663,9 @@ export default function App() {
                 <div className="article-meta-row">
                   <div className="meta-item">
                     <Calendar size={14} aria-hidden="true" />
-                    <span>Published: {formatDate(selectedBlog.published_at)}</span>
+                    <span>
+                      Published: {formatDate(selectedBlog.published_at)}
+                    </span>
                   </div>
                   <div className="meta-item">
                     <Clock size={14} aria-hidden="true" />
@@ -696,7 +680,9 @@ export default function App() {
 
               <div
                 className="markdown-body"
-                dangerouslySetInnerHTML={{ __html: htmlContent }}
+                dangerouslySetInnerHTML={{
+                  __html: DOMPurify.sanitize(htmlContent),
+                }}
               />
 
               <footer className="article-footer">
@@ -735,7 +721,11 @@ export default function App() {
           ) : (
             <div className="home-blog-grid-container">
               <div className="home-blog-header">
-                <BookOpen size={32} className="text-accent" aria-hidden="true" />
+                <BookOpen
+                  size={32}
+                  className="text-accent"
+                  aria-hidden="true"
+                />
                 <h2>Available Articles</h2>
               </div>
               <div className="home-blog-grid">
