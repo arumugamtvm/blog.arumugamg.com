@@ -545,6 +545,15 @@ export default function App() {
     setTheme((t) => (t === "dark" ? "light" : "dark"));
   };
 
+  const sanitizedMarkdown = useMemo(() => {
+    if (!htmlContent) return { __html: "" };
+    return {
+      __html: DOMPurify.sanitize(htmlContent, {
+        ADD_ATTR: ["data-code"],
+      })
+    };
+  }, [htmlContent]);
+
   return (
     <div className="blog-app-shell">
       {selectedBlog && !blogLoading && (
@@ -693,11 +702,7 @@ export default function App() {
 
               <div
                 className="markdown-body"
-                dangerouslySetInnerHTML={{
-                  __html: DOMPurify.sanitize(htmlContent, {
-                    ADD_ATTR: ["data-code"],
-                  }),
-                }}
+                dangerouslySetInnerHTML={sanitizedMarkdown}
               />
 
               <footer className="article-footer">
