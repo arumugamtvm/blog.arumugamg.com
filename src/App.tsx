@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { fetchPublishedBlogs, fetchBlogBySlug } from "./api";
 import type { Blog } from "./types";
@@ -21,6 +21,7 @@ import {
   Moon,
   Check,
   Copy,
+  List,
 } from "lucide-react";
 import "./App.css";
 
@@ -28,6 +29,28 @@ marked.setOptions({
   breaks: true,
   gfm: true,
 });
+
+/** Shared heading id used by marked renderer and TOC — must stay in sync. */
+function slugifyHeading(raw: string, idCounts: Record<string, number>): string {
+  const text = raw
+    .replace(/<[^>]+>/g, "")
+    .replace(/[`*_~]/g, "")
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/^[#\s]+/, "")
+    .trim();
+  let id = text
+    .toLowerCase()
+    .replace(/[^\w]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  if (!id) return "";
+  if (idCounts[id]) {
+    idCounts[id]++;
+    id = `${id}-${idCounts[id]}`;
+  } else {
+    idCounts[id] = 1;
+  }
+  return id;
+}
 
 type Theme = "dark" | "light";
 
@@ -70,7 +93,11 @@ export default function App() {
   const [theme, setTheme] = useState<Theme>(getInitialTheme);
   const [shareCopied, setShareCopied] = useState(false);
   const [copyMDCopied, setCopyMDCopied] = useState(false);
+  const [activeHeading, setActiveHeading] = useState<string | null>(null);
+  const [tocPanelOpen, setTocPanelOpen] = useState(false);
   const articleRef = useRef<HTMLDivElement>(null);
+  const tocRef = useRef<HTMLElement>(null);
+  const activeHeadingRef = useRef<string | null>(null);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -211,13 +238,11 @@ export default function App() {
     const rawMarkdown = selectedBlog.content;
     const renderer = new marked.Renderer();
 
-    // Override heading to correctly set ids for Table of Contents navigation
+    // Keep heading ids in sync with the TOC extractor (including duplicates).
+    const headingIdCounts: Record<string, number> = {};
     renderer.heading = function ({ text, depth }) {
-      const escapedText = text
-        .toLowerCase()
-        .replace(/[^\w]+/g, "-")
-        .replace(/^-+|-+$/g, "");
-      return `<h${depth} id="${escapedText}">${text}</h${depth}>`;
+      const id = slugifyHeading(text, headingIdCounts);
+      return `<h${depth} id="${id}">${text}</h${depth}>`;
     };
 
     renderer.code = function ({ text, lang }) {
@@ -232,83 +257,134 @@ export default function App() {
       const cleanText = text.replace(escapeTest, (m) => escapeMap[m]);
 
       if (lang === "mermaid") {
-        return `<div class="mermaid-container"><div class="mermaid-actions"><button class="copy-mermaid-code" data-code="${encodeURIComponent(text)}">Copy Code</button><button class="copy-mermaid-img">Copy Image</button></div><pre class="mermaid-wrapper"><div class="mermaid-unprocessed">${cleanText}</div></pre></div>`;
+        return `<div class="mermaid-container"><div class="mermaid-actions"><button class="copy-mermaid-code" data-code="${encodeURIComponent(text)}">Copy Code</button><button class="copy-mermaid-img">Copy Image</button></div><div class="mermaid-wrapper" data-mermaid-code="${encodeURIComponent(text)}"><div class="mermaid-unprocessed">${cleanText}</div></div></div>`;
       }
 
       return `<div class="code-block-wrapper"><button class="copy-code-btn" data-code="${encodeURIComponent(text)}">Copy Code</button><pre><code class="language-${lang || "text"}">${cleanText}</code></pre></div>`;
     };
 
     return marked.parse(rawMarkdown, { renderer }) as string;
-  }, [selectedBlog]);
+    // Stabilize on content identity — new selectedBlog object refs must not
+    // rebuild HTML (that wipes rendered Mermaid SVGs via React/DOM resets).
+  }, [selectedBlog?.id, selectedBlog?.content]);
 
-  useEffect(() => {
-    if (!selectedBlog || blogLoading || !htmlContent) return;
+  const sanitizedHtml = useMemo(() => {
+    if (!htmlContent) return "";
+    return DOMPurify.sanitize(htmlContent, {
+      ADD_ATTR: ["data-code", "data-raw-code", "data-mermaid-code"],
+    });
+  }, [htmlContent]);
 
-    Prism.highlightAll();
+  const markdownRef = useRef<HTMLDivElement>(null);
+  const appliedHtmlRef = useRef<string>("");
+  const prevThemeRef = useRef(theme);
 
-    let active = true;
+  // Apply HTML only when the string changes, then render Mermaid once.
+  // Avoids dangerouslySetInnerHTML re-commits wiping SVGs.
+  useLayoutEffect(() => {
+    const root = markdownRef.current;
+    if (!root || !selectedBlog || blogLoading) return;
 
-    const renderMermaid = async () => {
-      try {
-        const isLight = theme === "light";
-        mermaid.initialize({
-          startOnLoad: false,
-          theme: isLight ? "default" : "dark",
-          securityLevel: "loose",
-          themeVariables: isLight
-            ? {
-                background: "#ffffff",
-                primaryColor: "#4f46e5",
-                primaryTextColor: "#0f172a",
-                lineColor: "#6366f1",
-              }
-            : {
-                background: "#0f111a",
-                primaryColor: "#6366f1",
-                primaryTextColor: "#f0f3ff",
-                lineColor: "#8b5cf6",
-              },
-        });
+    let cancelled = false;
 
-        const containers = document.querySelectorAll(".mermaid-unprocessed");
-        for (let i = 0; i < containers.length; i++) {
-          if (!active) return;
-          const container = containers[i] as HTMLElement;
-          if (!document.body.contains(container)) continue;
+    const renderMermaidIn = async (host: HTMLElement) => {
+      const nodes = [...host.querySelectorAll(".mermaid-unprocessed")];
+      if (!nodes.length) return;
 
-          const code = container.textContent?.trim() || "";
-          if (!code) continue;
+      const isLight = theme === "light";
+      mermaid.initialize({
+        startOnLoad: false,
+        theme: isLight ? "default" : "dark",
+        securityLevel: "loose",
+        themeVariables: isLight
+          ? {
+              background: "#ffffff",
+              primaryColor: "#4f46e5",
+              primaryTextColor: "#0f172a",
+              lineColor: "#6366f1",
+            }
+          : {
+              background: "#0f111a",
+              primaryColor: "#6366f1",
+              primaryTextColor: "#f0f3ff",
+              lineColor: "#8b5cf6",
+            },
+      });
 
+      // Snapshot code first so DOM replacements cannot invalidate the list.
+      const jobs = nodes.map((node, i) => ({
+        node: node as HTMLElement,
+        code: (node.textContent || "").trim(),
+        i,
+      }));
+
+      for (const { node, code, i } of jobs) {
+        if (cancelled || !code) continue;
+        if (!document.body.contains(node)) continue;
+        const wrapper = node.parentElement;
+        if (!wrapper) continue;
+
+        try {
           const id = `mermaid-render-${i}-${Date.now()}`;
-
-          try {
-            const { svg } = await mermaid.render(id, code);
-            if (!active) return;
-            const wrapper = container.parentElement;
-            if (wrapper && document.body.contains(wrapper)) {
-              wrapper.innerHTML = `<div class="mermaid-svg-wrapper" data-raw-code="${encodeURIComponent(code)}">${svg}</div>`;
-            }
-          } catch (renderErr) {
-            console.error("Mermaid render error:", renderErr);
-            if (!active) return;
-            const wrapper = container.parentElement;
-            if (wrapper && document.body.contains(wrapper)) {
-              wrapper.innerHTML = `<div class="mermaid-error">Diagram render error. Please reload.</div>`;
-            }
+          const { svg } = await mermaid.render(id, code);
+          if (cancelled || !document.body.contains(wrapper)) continue;
+          wrapper.innerHTML = `<div class="mermaid-svg-wrapper" data-raw-code="${encodeURIComponent(code)}">${svg}</div>`;
+        } catch (renderErr) {
+          console.error("Mermaid render error:", renderErr);
+          if (!cancelled && document.body.contains(wrapper)) {
+            wrapper.innerHTML = `<div class="mermaid-error">Diagram render error. Please reload.</div>`;
           }
         }
-      } catch (err) {
-        console.error("Mermaid initialization failed:", err);
+      }
+
+      if (!cancelled) {
+        document
+          .querySelector(".blog-reader-pane")
+          ?.dispatchEvent(new Event("scroll"));
       }
     };
 
-    // Render after React updates the DOM with htmlContent
-    const timer = setTimeout(renderMermaid, 50);
+    const htmlChanged = appliedHtmlRef.current !== sanitizedHtml;
+    const themeChanged = prevThemeRef.current !== theme;
+    prevThemeRef.current = theme;
+
+    if (htmlChanged) {
+      appliedHtmlRef.current = sanitizedHtml;
+      root.innerHTML = sanitizedHtml;
+      // Wrap tables so wide grids scroll inside the article instead of
+      // expanding the page (overflow-x: clip/hidden on the reader pane).
+      root.querySelectorAll("table").forEach((table) => {
+        if (table.parentElement?.classList.contains("table-scroll")) return;
+        const wrap = document.createElement("div");
+        wrap.className = "table-scroll";
+        table.replaceWith(wrap);
+        wrap.appendChild(table);
+      });
+      Prism.highlightAllUnder(root);
+    } else if (themeChanged) {
+      // Theme toggle: restore source into wrappers so diagrams re-color.
+      root.querySelectorAll(".mermaid-wrapper").forEach((wrapper) => {
+        const raw =
+          wrapper.getAttribute("data-mermaid-code") ||
+          wrapper
+            .querySelector("[data-raw-code]")
+            ?.getAttribute("data-raw-code") ||
+          "";
+        if (!raw) return;
+        const code = decodeURIComponent(raw);
+        wrapper.setAttribute("data-mermaid-code", encodeURIComponent(code));
+        wrapper.innerHTML = `<div class="mermaid-unprocessed"></div>`;
+        const node = wrapper.querySelector(".mermaid-unprocessed");
+        if (node) node.textContent = code;
+      });
+    }
+
+    void renderMermaidIn(root);
+
     return () => {
-      active = false;
-      clearTimeout(timer);
+      cancelled = true;
     };
-  }, [selectedBlog, blogLoading, htmlContent, theme]);
+  }, [sanitizedHtml, selectedBlog?.id, blogLoading, theme]);
 
   // Scroll to the section anchor once the article (and mermaid diagrams) have
   // finished rendering. A single scrollIntoView after layout settles lands the
@@ -501,6 +577,98 @@ export default function App() {
     return () => article.removeEventListener("click", handleAnchorClick);
   }, [htmlContent, selectedBlog, blogLoading]);
 
+  // Build TOC from rendered HTML so ids always match the live DOM
+  // (raw markdown extraction falsely picks up headings inside code fences).
+  const headings = useMemo(() => {
+    if (!htmlContent) return [];
+    const doc = new DOMParser().parseFromString(htmlContent, "text/html");
+    return [...doc.querySelectorAll("h1, h2, h3, h4, h5, h6")]
+      .map((h) => ({
+        id: h.id,
+        text: (h.textContent || "").trim(),
+        depth: Number(h.tagName[1]),
+      }))
+      .filter((h) => h.id && h.text);
+  }, [htmlContent]);
+
+  // Track active heading from what's in view; keep that TOC link centered
+  useEffect(() => {
+    if (!selectedBlog || headings.length === 0) return;
+
+    activeHeadingRef.current = null;
+    const ids = headings.map((h) => h.id);
+
+    const scrollTocToActive = (id: string) => {
+      const sticky = tocRef.current?.querySelector(
+        ".toc-sticky",
+      ) as HTMLElement | null;
+      const link = tocRef.current?.querySelector(
+        `a[href="#${CSS.escape(id)}"]`,
+      ) as HTMLElement | null;
+      if (!sticky || !link) return;
+
+      // Position relative to the scroll container (avoid offsetTop/offsetParent quirks).
+      const linkTop =
+        sticky.scrollTop +
+        (link.getBoundingClientRect().top - sticky.getBoundingClientRect().top);
+      const target =
+        linkTop - sticky.clientHeight / 2 + link.offsetHeight / 2;
+      const maxScroll = Math.max(0, sticky.scrollHeight - sticky.clientHeight);
+      // Instant — smooth races during main-pane scroll leave the active link
+      // stuck at the bottom edge of the TOC.
+      sticky.scrollTo({
+        top: Math.max(0, Math.min(target, maxScroll)),
+        behavior: "auto",
+      });
+    };
+
+    let tocScrollRaf = 0;
+    const handleScroll = () => {
+      // Activate a heading once it reaches the mid-viewport band so the TOC
+      // tracks the section title the reader can already see (not only after
+      // that title has scrolled up near the header).
+      const focusY = Math.round(window.innerHeight * 0.55);
+      let current = ids[0];
+      for (const id of ids) {
+        const el = document.getElementById(id);
+        if (!el) continue;
+        if (el.getBoundingClientRect().top <= focusY) {
+          current = id;
+        }
+      }
+
+      if (activeHeadingRef.current !== current) {
+        activeHeadingRef.current = current;
+        setActiveHeading(current);
+        cancelAnimationFrame(tocScrollRaf);
+        tocScrollRaf = requestAnimationFrame(() => scrollTocToActive(current));
+      }
+    };
+
+    const pane = document.querySelector(".blog-reader-pane");
+    if (!pane) return;
+
+    pane.addEventListener("scroll", handleScroll, { passive: true });
+    handleScroll();
+    return () => {
+      cancelAnimationFrame(tocScrollRaf);
+      pane.removeEventListener("scroll", handleScroll);
+    };
+  }, [selectedBlog, headings]);
+
+  useEffect(() => {
+    setTocPanelOpen(false);
+  }, [selectedBlog?.id]);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 1024px)");
+    const onChange = () => {
+      if (mq.matches) setTocPanelOpen(false);
+    };
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+
   const formatDate = (dateStr: string | null) => {
     if (!dateStr) return "Draft";
     try {
@@ -544,15 +712,6 @@ export default function App() {
     }
     setTheme((t) => (t === "dark" ? "light" : "dark"));
   };
-
-  const sanitizedMarkdown = useMemo(() => {
-    if (!htmlContent) return { __html: "" };
-    return {
-      __html: DOMPurify.sanitize(htmlContent, {
-        ADD_ATTR: ["data-code"],
-      })
-    };
-  }, [htmlContent]);
 
   return (
     <div className="blog-app-shell">
@@ -678,66 +837,115 @@ export default function App() {
               <p>{error}</p>
             </div>
           ) : selectedBlog ? (
-            <article className="blog-article" ref={articleRef}>
-              <header className="article-header">
-                <h1 className="article-title">{selectedBlog.title}</h1>
+            <div className="article-layout">
+              <article className="blog-article" ref={articleRef}>
+                <header className="article-header">
+                  <h1 className="article-title">{selectedBlog.title}</h1>
 
-                <div className="article-meta-row">
-                  <div className="meta-item">
-                    <Calendar size={14} aria-hidden="true" />
-                    <span>
-                      Published: {formatDate(selectedBlog.published_at)}
-                    </span>
-                  </div>
-                  <div className="meta-item">
-                    <Clock size={14} aria-hidden="true" />
-                    <span>{readingTime} min read</span>
-                  </div>
-                  <div className="meta-item text-accent">
-                    <Cpu size={14} aria-hidden="true" />
-                    <span>Developer Post</span>
-                  </div>
-                </div>
-              </header>
-
-              <div
-                className="markdown-body"
-                dangerouslySetInnerHTML={sanitizedMarkdown}
-              />
-
-              <footer className="article-footer">
-                <div className="divider" />
-                <div className="footer-flex">
-                  <div className="author-badge">
-                    <div className="avatar" aria-hidden="true">
-                      AG
+                  <div className="article-meta-row">
+                    <div className="meta-item">
+                      <Calendar size={14} aria-hidden="true" />
+                      <span>
+                        Published: {formatDate(selectedBlog.published_at)}
+                      </span>
                     </div>
-                    <div className="author-info">
-                      <strong>Arumugam G</strong>
-                      <p>Software Engineer & Systems Architect</p>
+                    <div className="meta-item">
+                      <Clock size={14} aria-hidden="true" />
+                      <span>{readingTime} min read</span>
+                    </div>
+                    <div className="meta-item text-accent">
+                      <Cpu size={14} aria-hidden="true" />
+                      <span>Developer Post</span>
                     </div>
                   </div>
-                  <div className="footer-actions">
+
+                  <div className="article-header-actions">
                     <button
                       className="btn btn-ghost btn-xs"
                       onClick={handleCopyMD}
-                      aria-label="Copy article markdown"
+                      aria-label="Copy page content"
                     >
-                      {copyMDCopied ? <Check size={13} /> : <Copy size={13} />}
-                      <span>{copyMDCopied ? "Copied" : "Copy MD"}</span>
+                      {copyMDCopied ? <Check size={14} /> : <Copy size={14} />}
+                      <span>{copyMDCopied ? "Copied!" : "Copy Page"}</span>
                     </button>
                     <button
                       className="btn btn-ghost btn-xs"
                       onClick={handleShare}
                       aria-label="Copy link to share"
                     >
-                      {shareCopied ? <Check size={13} /> : <Share2 size={13} />}
-                      <span>{shareCopied ? "Copied" : "Share"}</span>
+                      {shareCopied ? <Check size={14} /> : <Share2 size={14} />}
+                      <span>{shareCopied ? "Copied!" : "Share"}</span>
                     </button>
                   </div>
-                </div>
-              </footer>
-            </article>
+                </header>
+
+                <div className="markdown-body" ref={markdownRef} />
+
+                <footer className="article-footer">
+                  <div className="divider" />
+                  <div className="footer-flex">
+                    <div className="author-badge">
+                      <div className="avatar" aria-hidden="true">
+                        AG
+                      </div>
+                      <div className="author-info">
+                        <strong>Arumugam G</strong>
+                        <p>Software Engineer & Systems Architect</p>
+                      </div>
+                    </div>
+                  </div>
+                </footer>
+              </article>
+
+              {headings.length > 1 && (
+                <>
+                  <button
+                    type="button"
+                    className="toc-mobile-toggle"
+                    onClick={() => setTocPanelOpen((open) => !open)}
+                    aria-expanded={tocPanelOpen}
+                    aria-controls="article-toc"
+                    aria-label={tocPanelOpen ? "Close on this page" : "On this page"}
+                  >
+                    {tocPanelOpen ? <X size={16} /> : <List size={16} />}
+                    <span>On this page</span>
+                  </button>
+                  {tocPanelOpen && (
+                    <button
+                      type="button"
+                      className="toc-backdrop"
+                      aria-label="Close table of contents"
+                      onClick={() => setTocPanelOpen(false)}
+                    />
+                  )}
+                  <aside
+                    id="article-toc"
+                    className={`toc-sidebar${tocPanelOpen ? " toc-sidebar--open" : ""}`}
+                    ref={tocRef}
+                  >
+                    <div className="toc-sticky">
+                      <div className="toc-header">
+                        <List size={14} className="toc-icon" />
+                        <span>On this page</span>
+                      </div>
+                      <nav className="toc-links" aria-label="Table of contents">
+                        {headings.map((h, i) => (
+                          <a
+                            key={i}
+                            href={`#${h.id}`}
+                            className={`toc-link toc-depth-${h.depth}${activeHeading === h.id ? " active" : ""}`}
+                            aria-current={activeHeading === h.id ? "location" : undefined}
+                            onClick={() => setTocPanelOpen(false)}
+                          >
+                            {h.text}
+                          </a>
+                        ))}
+                      </nav>
+                    </div>
+                  </aside>
+                </>
+              )}
+            </div>
           ) : (
             <div className="home-blog-grid-container">
               <div className="home-blog-header">
