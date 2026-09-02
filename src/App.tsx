@@ -141,8 +141,10 @@ export default function App() {
     loadBlogs();
   }, []);
 
-  // Resolve selected blog from path slug param
+  // Load only the selected article when a slug is in the path.
   useEffect(() => {
+    let cancelled = false;
+
     async function resolveBlog() {
       if (!slug) {
         setSelectedBlog(null);
@@ -151,22 +153,24 @@ export default function App() {
       if (selectedBlog && selectedBlog.slug === slug) {
         return;
       }
-      const match = blogs.find((b) => b.slug === slug);
-      if (match) {
-        setSelectedBlog(match);
-        return;
-      }
+
       try {
         setBlogLoading(true);
         const blog = await fetchBlogBySlug(slug);
-        setSelectedBlog(blog);
+        if (!cancelled) setSelectedBlog(blog);
       } catch {
-        setSelectedBlog(null);
+        // Prefer a fresh slug fetch; fall back to the published list cache.
+        const match = blogs.find((b) => b.slug === slug) ?? null;
+        if (!cancelled) setSelectedBlog(match);
       } finally {
-        setBlogLoading(false);
+        if (!cancelled) setBlogLoading(false);
       }
     }
-    resolveBlog();
+
+    void resolveBlog();
+    return () => {
+      cancelled = true;
+    };
   }, [slug, blogs, selectedBlog]);
 
   // In-article anchor clicks: scroll to the heading without reloading.
@@ -946,6 +950,23 @@ export default function App() {
                 </>
               )}
             </div>
+          ) : loading ? (
+            <div className="reader-loader" role="status">
+              <span className="spinner large" aria-hidden="true" />
+              <span>Loading published articles...</span>
+            </div>
+          ) : filteredBlogs.length === 0 ? (
+            <div className="reader-empty-state">
+              <BookOpen size={48} className="text-dim" aria-hidden="true" />
+              <h2>
+                {searchQuery ? "No matches found" : "No published blogs yet"}
+              </h2>
+              <p>
+                {searchQuery
+                  ? "Try a different search term."
+                  : "New developer logs will appear here when published."}
+              </p>
+            </div>
           ) : (
             <div className="home-blog-grid-container">
               <div className="home-blog-header">
@@ -960,6 +981,7 @@ export default function App() {
                 {filteredBlogs.map((blog) => (
                   <button
                     key={blog.id}
+                    type="button"
                     onClick={() => selectBlog(blog)}
                     className="home-blog-card"
                   >
