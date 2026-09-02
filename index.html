@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Developer blogs by Arumugam G — architecture, APIs, and systems." />
+    <title>blog.arumugamg.com</title>
+    <script>
+      (function () {
+        try {
+          var isManual = localStorage.getItem("blog-theme-manual") === "true";
+          var t = localStorage.getItem("blog-theme");
+          if (!isManual || (t !== "light" && t !== "dark")) {
+            t = window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+          }
+          document.documentElement.setAttribute("data-theme", t);
+        } catch (e) {
+          document.documentElement.setAttribute("data-theme", "dark");
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-B3iGoNel.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/chunk-Y2CYZVJY-DsF7k-Jl.js">
+    <link rel="modulepreload" crossorigin href="/assets/src-BMa7vLb8.js">
+    <link rel="modulepreload" crossorigin href="/assets/chunk-WYO6CB5R-Bvq3fP5_.js">
+    <link rel="modulepreload" crossorigin href="/assets/dist-Q9n2Bb2K.js">
+    <link rel="modulepreload" crossorigin href="/assets/chunk-ICXQ74PX-BNQYPwKK.js">
+    <link rel="modulepreload" crossorigin href="/assets/path-BWPyau1x.js">
+    <link rel="modulepreload" crossorigin href="/assets/array-BifhSqXX.js">
+    <link rel="modulepreload" crossorigin href="/assets/line-CqWzufhl.js">
+    <link rel="modulepreload" crossorigin href="/assets/chunk-C7G6YPKG-BbmVLqsU.js">
+    <link rel="modulepreload" crossorigin href="/assets/chunk-OGEWGWER-WGo7I5Ku.js">
+    <link rel="modulepreload" crossorigin href="/assets/chunk-HOUHSVGY-BcaNW7ec.js">
+    <link rel="modulepreload" crossorigin href="/assets/chunk-Q4XR5HBZ-DFutgW6g.js">
+    <link rel="modulepreload" crossorigin href="/assets/rough.esm-CSKSodPl.js">
+    <link rel="modulepreload" crossorigin href="/assets/chunk-ZGVPDNZ5-BdB4rEs8.js">
+    <link rel="modulepreload" crossorigin href="/assets/chunk-7BUUIJ7U-Bb538aSH.js">
+    <link rel="stylesheet" crossorigin href="/assets/index-B6b8dsXo.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
